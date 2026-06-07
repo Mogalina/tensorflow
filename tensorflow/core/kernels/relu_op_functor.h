@@ -17,8 +17,8 @@ limitations under the License.
 #define TENSORFLOW_CORE_KERNELS_RELU_OP_FUNCTOR_H_
 // Functor definition for ReluOp and ReluGradOp, must be compilable by nvcc.
 
-#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/tensor_types.h"
+#include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 
 namespace tensorflow {
 namespace functor {
@@ -183,10 +183,17 @@ struct Selu {
     const auto scale_alpha = static_cast<T>(1.7580993408473768599402175208123);
     const auto one = static_cast<T>(1);
     const auto zero = static_cast<T>(0);
-    activations.device(d) =
-        (features < zero)
-            .select(scale_alpha * (features.exp() - features.constant(one)),
-                    scale * features);
+
+    const auto is_nan = features != features;
+    const auto is_negative = features < zero;
+
+    const auto exp_part = (features.exp() - one);
+    const auto negative_branch = scale_alpha * exp_part;
+    const auto positive_branch = scale * features;
+
+    const auto selu = is_negative.select(negative_branch, positive_branch);
+
+    activations.device(d) = is_nan.select(features, selu);
   }
 };
 
@@ -203,9 +210,14 @@ struct SeluGrad {
                   typename TTypes<T>::Tensor backprops) {
     const auto scale = static_cast<T>(1.0507009873554804934193349852946);
     const auto scale_alpha = static_cast<T>(1.7580993408473768599402175208123);
-    backprops.device(d) =
-        (activations < static_cast<T>(0))
-            .select(gradients * (activations + scale_alpha), gradients * scale);
+    const auto zero = static_cast<T>(0);
+
+    const auto is_positive = activations > zero;
+    const auto grad_positive = gradients * scale;
+    const auto grad_negative =
+        gradients * (activations + scale_alpha) * (scale / scale_alpha);
+
+    backprops.device(d) = is_positive.select(grad_positive, grad_negative);
   }
 };
 
